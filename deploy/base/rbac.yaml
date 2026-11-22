@@ -4,7 +4,7 @@ metadata:
   name: dev-controller
   namespace: dev-system
 ---
-# ADR-2004. What the controller may do anywhere. It is only what it needs
+# DEV-2004. What the controller may do anywhere. It is only what it needs
 # before an environment's namespace can answer to a role of its own: making
 # the namespace, and what the estate puts in every one. The
 # dev-controller-scope policy in policies.yaml narrows every write here to a
@@ -68,7 +68,7 @@ subjects:
     name: dev-controller
     namespace: dev-system
 ---
-# ADR-2004. What the controller may do inside one environment. No binding in
+# DEV-2004. What the controller may do inside one environment. No binding in
 # this file gives it to anyone: the controller binds it to itself in each
 # namespace it makes, so it holds these rights there and nowhere else. It can
 # read a pod or its log in an environment, run a command in one, and reach
@@ -78,7 +78,7 @@ subjects:
 # deploy the cluster's own reason. The writes are the kinds a project's
 # manifests may hold: the list in internal/controller/manifests. A kind joins
 # both lists or neither. The streams are what a signed-in caller's logs,
-# commands, and forwards are carried by (ADR-2007). There is no secret here,
+# commands, and forwards are carried by (DEV-2007). There is no secret here,
 # and no wildcard.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

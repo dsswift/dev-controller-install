@@ -4,7 +4,7 @@
 #
 # It is a component, and not a base, so that it is rendered together with the
 # estate's settings. The environment registry is copied out of the settings
-# object into the admission policy as the install is rendered (ADR-2001), so
+# object into the admission policy as the install is rendered (DEV-2001), so
 # the policy never has a value to look up when a pod is admitted, and an
 # install with no registry named does not render at all.
 apiVersion: kustomize.config.k8s.io/v1alpha1
@@ -38,4 +38,4 @@ replacements:
 
 images:
   - name: ghcr.io/dsswift/dev-controller
-    newTag: 4.11.0 # x-release-please-version
+    newTag: 4.12.0 # x-release-please-version

@@ -62,7 +62,7 @@ Rootless BuildKit needs a pod with no seccomp or AppArmor profile, so
    kind: Kustomization
    components:
      # The install at the release you run. Its image is that release's.
-     - https://github.com/dsswift/dev-controller-install//deploy/base?ref=v4.11.0 # x-release-please-version
+     - https://github.com/dsswift/dev-controller-install//deploy/base?ref=v4.12.0 # x-release-please-version
    configMapGenerator:
      - name: dev-controller-settings
        namespace: dev-system
@@ -245,7 +245,7 @@ digest and carries an SBOM attestation. Check one before you run it:
 
 <!-- x-release-please-start-version -->
 ```bash
-cosign verify ghcr.io/dsswift/dev-controller:4.11.0 \
+cosign verify ghcr.io/dsswift/dev-controller:4.12.0 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/dsswift/dev.yaml/'
 ```

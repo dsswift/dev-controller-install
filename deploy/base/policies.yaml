@@ -4,7 +4,7 @@
 # the namespace it judges, so there is nothing whose absence lets a pod
 # through.
 
-# ADR-2001: an image from the environment registry runs only in an
+# DEV-2001: an image from the environment registry runs only in an
 # environment's namespace, never in one of kind test or prod, and only by
 # digest.
 #
@@ -73,7 +73,7 @@ spec:
   policyName: dev-environment-images
   validationActions: [Deny]
 ---
-# ADR-2006: a pod in an environment stays on the nodes the estate picked.
+# DEV-2006: a pod in an environment stays on the nodes the estate picked.
 #
 # The controller writes the estate's node selector and tolerations onto each
 # environment's namespace as annotations, and sets them on every pod it
@@ -149,7 +149,7 @@ spec:
   policyName: dev-environment-placement
   validationActions: [Deny]
 ---
-# ADR-2004: keeps the controller to what it made. Its ClusterRole lets it write quotas,
+# DEV-2004: keeps the controller to what it made. Its ClusterRole lets it write quotas,
 # network policies, secrets, and one role binding in any namespace, because
 # an environment's namespace does not exist until the controller makes it.
 # This policy refuses every write by the controller's service account outside
@@ -157,7 +157,7 @@ spec:
 # own records aside. And it refuses any role binding but the one that gives
 # the controller the environment role.
 #
-# It judges a stream too (ADR-2007). A command run in a pod and a connection
+# It judges a stream too (DEV-2007). A command run in a pod and a connection
 # to a pod's port reach admission as CONNECT. The controller holds the right
 # for them only through the environment role, so this is a second guard: a
 # stream by the controller into a pod outside an environment is refused here
