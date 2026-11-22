@@ -1,0 +1,17 @@
+# The controller's API, inside the cluster. An estate puts its own gateway or
+# Ingress in front of it with a certificate, since the program calls it over
+# HTTPS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dev-controller
+  namespace: dev-system
+  labels:
+    app.kubernetes.io/name: dev-controller
+spec:
+  selector:
+    app.kubernetes.io/name: dev-controller
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

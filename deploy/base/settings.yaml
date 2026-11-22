@@ -1,0 +1,330 @@
+# The dev controller's settings. Everything an estate decides about its
+# environments is in this one file. The controller reads it at start; restart
+# it after a change. A key it does not know is an error, so a typo never
+# passes for a setting.
+#
+# Replace every example.com value with your own.
+#
+# One value stands beside this file in the same settings object, and not in
+# it: environmentRegistry, the registry that holds the images built for
+# environments. The install renders it into an admission policy, and the
+# controller reads it from the same place. deploy/README.md shows where it
+# goes.
+
+# Who may sign in. Each issuer is an OIDC issuer the controller trusts. The
+# controller checks a token's signature, issuer, audience, and expiry against
+# the issuer's own keys. It holds no client secret.
+issuers:
+  # People. The dev program signs a person in with a browser (authorization
+  # code with PKCE, on a loopback address) and sends the ID token.
+  - name: people
+    kind: person
+    # The issuer URL, exactly as tokens carry it in "iss".
+    url: https://id.example.com
+    # A public client registered at the issuer for the dev program. It needs
+    # the redirect address http://localhost/callback, on any port.
+    clientId: dev
+    # The audience a token must carry. Default: the client id.
+    # audience: dev
+    # Default: openid, profile, email, offline_access.
+    # scopes: [openid, profile, email, offline_access]
+    # Only for an issuer that needs one exact redirect address:
+    # redirectUri: http://localhost:8250/callback
+    owner:
+      # What makes two callers the same owner. Default: sub.
+      identityClaim: sub
+      # What names the owner in a namespace. Of an email address, the part
+      # before the @ is used. Default: sub.
+      nameClaim: email
+
+  # Pipelines. A job sends the identity token its forge gives it. GitHub
+  # Actions and GitLab id_tokens are both plain OIDC tokens.
+  - name: forge
+    kind: pipeline
+    url: https://token.actions.githubusercontent.com
+    # The audience the job asks its forge for.
+    audience: https://dev.example.com
+    owner:
+      # Every job of one repository is the same owner.
+      identityClaim: repository
+      nameClaim: repository
+
+# What each caller may do. A grant matches a caller by issuer and claims, and
+# covers projects, kinds, and actions. Its scope is "own" (the caller's own
+# environments) or "all". A caller is allowed when any one grant allows. A
+# refusal names the grant and the rule that refused.
+#
+# projectsFor ties projects to callers inside one grant: a caller may act on
+# a project only through a row whose claims all match its token and that
+# lists the project. It is how one grant covers a forge's whole group and
+# still keeps each repository to its own projects. projects stays the most
+# the grant covers.
+#
+# The actions are create, read, extend, remove, deploy, logs, forward, and
+# exec. "*" is all, and a * inside a value matches any run of characters.
+#
+#   deploy   build a service's image, apply its manifests, run its tasks
+#   logs     read what a service's pods write
+#   forward  reach a port of a service's pod from the caller's machine
+#   exec     run a command in a service's pod. Syncing code into a running
+#            container is a command in it, so a sync needs exec too
+#
+# The last three reach into what runs. Each is its own action, so a grant
+# can give logs and forwards and no shell.
+grants:
+  # A developer makes, manages, and deploys into their own environments, and
+  # works on what runs in them.
+  - name: developers
+    issuer: people
+    claims:
+      groups: [developers]
+    projects: ["*"]
+    kinds: [dev, agent, demo]
+    actions: [create, read, extend, remove, deploy, logs, forward, exec]
+    scope: own
+
+  # An agent deploys into its own environment, reads its logs, and reaches
+  # its ports. It gets no shell: add exec for an agent that should sync code
+  # into a running container, and leave it out for one that should only
+  # deploy what it changed.
+  - name: agents
+    issuer: people
+    claims:
+      groups: [agents]
+    projects: ["*"]
+    kinds: [agent]
+    actions: [create, read, extend, remove, deploy, logs, forward]
+    scope: own
+
+  # Every repository of a forge group manages its own previews, and each
+  # repository may name only its own projects.
+  - name: previews
+    issuer: forge
+    claims:
+      repository: ["acme/*"]
+    projects: ["*"]
+    kinds: [preview]
+    actions: [create, read, extend, remove, deploy]
+    scope: own
+    projectsFor:
+      - claims: {repository: [acme/shop]}
+        projects: [shop, shop-api]
+      - claims: {repository: [acme/billing]}
+        projects: [billing]
+
+  # An admin manages every environment.
+  - name: admins
+    issuer: people
+    claims:
+      groups: [platform-admins]
+    projects: ["*"]
+    kinds: ["*"]
+    actions: ["*"]
+    scope: all
+
+# What each kind of environment gets. A kind left out is not offered. The
+# kinds are dev, preview, agent, uat, demo, test, and prod.
+#
+# lifetime is how long an environment lives after its last activity. Every
+# API call about the environment counts as activity. A kind with no lifetime
+# has no end. maxLifetime is the most a caller may ask for.
+#
+# quota becomes the namespace's ResourceQuota. limits becomes its LimitRange
+# for containers.
+kinds:
+  dev:
+    lifetime: 3d
+    maxLifetime: 2w
+    quota:
+      requests.cpu: "4"
+      requests.memory: 8Gi
+      limits.cpu: "8"
+      limits.memory: 16Gi
+      pods: "30"
+      services: "20"
+      persistentvolumeclaims: "10"
+    limits:
+      default: {cpu: 500m, memory: 512Mi}
+      defaultRequest: {cpu: 100m, memory: 128Mi}
+  preview:
+    lifetime: 2d
+    maxLifetime: 1w
+    quota:
+      requests.cpu: "2"
+      requests.memory: 4Gi
+      limits.cpu: "4"
+      limits.memory: 8Gi
+      pods: "20"
+      services: "20"
+      persistentvolumeclaims: "5"
+    limits:
+      default: {cpu: 500m, memory: 512Mi}
+      defaultRequest: {cpu: 100m, memory: 128Mi}
+  agent:
+    lifetime: 1d
+    maxLifetime: 3d
+    quota:
+      requests.cpu: "2"
+      requests.memory: 4Gi
+      limits.cpu: "4"
+      limits.memory: 8Gi
+      pods: "20"
+      services: "20"
+      persistentvolumeclaims: "5"
+    limits:
+      default: {cpu: 500m, memory: 512Mi}
+      defaultRequest: {cpu: 100m, memory: 128Mi}
+  demo:
+    lifetime: 2w
+    maxLifetime: 8w
+    quota:
+      requests.cpu: "4"
+      requests.memory: 8Gi
+      limits.cpu: "8"
+      limits.memory: 16Gi
+      pods: "30"
+      services: "20"
+      persistentvolumeclaims: "10"
+    limits:
+      default: {cpu: 500m, memory: 512Mi}
+      defaultRequest: {cpu: 100m, memory: 128Mi}
+
+# The most environments that may exist: for one owner, and in all. Only
+# environments that end are counted. A create past a cap is refused with a
+# message that says how to free one.
+caps:
+  perOwner: 5
+  fleet: 50
+
+# The cluster's own facts, for every environment's network policy. The policy
+# denies everything by default. It lets in only the ingress controller's
+# namespace. It lets out only DNS, the namespace itself, what egress names,
+# and the internet, which is every address but the ranges listed here.
+network:
+  ingressNamespace: ingress-nginx
+  # The cluster's node, pod, and service ranges. List an IPv6 range only if
+  # the cluster has IPv6.
+  clusterRanges:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  # Where the cluster's DNS runs. Default: pods labelled k8s-app=kube-dns in
+  # kube-system.
+  # dns:
+  #   namespace: kube-system
+  #   podLabels: {k8s-app: kube-dns}
+  # What inside the cluster's ranges every environment may reach, each on
+  # its own TCP ports: the estate's telemetry intake, say. Name pods by
+  # their namespace, and their labels if not every pod in it, or name a
+  # range. Everything else in the ranges stays shut.
+  # egress:
+  #   - name: telemetry
+  #     namespace: observability
+  #     podLabels: {app.kubernetes.io/name: otel-collector}
+  #     ports: [4317, 4318]
+  #   - name: shared-database
+  #     cidr: 10.20.0.15/32
+  #     ports: [5432]
+
+# Secrets copied into every environment from one source namespace, a pull
+# secret among them. The controller needs get on them there; the install
+# gives it that in its own namespace, dev-system.
+secrets:
+  sourceNamespace: dev-system
+  names:
+    - registry-pull
+
+# The one rule that names an environment's hosts and routes to them. The
+# default pattern is flat, so one wildcard DNS record and one wildcard
+# certificate for the domain cover every environment.
+hosts:
+  domain: dev.example.com
+  # pattern: "{namespace}-{service}.{domain}"
+
+  # How the controller makes the Ingress of each host a service asks for. A
+  # project never sends an Ingress of its own, so every host in an
+  # environment is one this rule made. The class and the annotations here
+  # are every host's default. A host may pick a door, and its service may
+  # set what allow lists: nothing else.
+  ingress:
+    # The ingress class. Leave it out for the cluster's default class.
+    className: nginx
+    # Annotations for every Ingress.
+    # annotations:
+    #   nginx.ingress.kubernetes.io/proxy-body-size: 50m
+    # Other ways in, by name. A service's host picks one with door. A door's
+    # class takes the place of the default, and its annotations are set
+    # over the default ones.
+    # doors:
+    #   signed-in:
+    #     annotations:
+    #       nginx.ingress.kubernetes.io/auth-url: https://sign-in.example.com/oauth2/auth
+    #       nginx.ingress.kubernetes.io/auth-signin: https://sign-in.example.com/oauth2/start
+    #   internal:
+    #     className: nginx-internal
+    # What a service may set on its own host: classes by name, and
+    # annotation keys, where a * matches any run of characters. Leave it
+    # out and a service sets none.
+    # allow:
+    #   classNames: [nginx-large-uploads]
+    #   annotations:
+    #     - nginx.ingress.kubernetes.io/proxy-read-timeout
+    #     - nginx.ingress.kubernetes.io/proxy-body-size
+    tls:
+      # Serve every host over HTTPS. The URLs dev prints then start https.
+      enabled: true
+      # The estate's wildcard certificate, as a secret that secrets.names
+      # copies into every environment. Leave it out when the ingress
+      # controller's own default certificate is the wildcard.
+      # secretName: wildcard-dev-example-com
+
+# How the environment registry is reached. The registry's address is the
+# environmentRegistry value beside this file.
+registry:
+  # A docker config secret in the controller's namespace that may push to the
+  # environment registry. It is lent to the builder for the length of one
+  # build, and is never stored in the builder's pod. Leave it out for a
+  # registry that takes a push with no sign-in.
+  pushSecret: registry-push
+  # The secret every environment pod pulls with. It must be in secrets.names,
+  # which is what copies it in. The controller adds it to every pod it
+  # applies, so a project's manifests name no pull secret.
+  pullSecret: registry-pull
+  # Reach the registry over plain HTTP. For a throwaway cluster only.
+  # insecure: false
+
+# What builds an environment's images. "buildkit" is the one builder there
+# is: BuildKit, rootless, which the controller runs in its own namespace and
+# places with the placement below. A project's machine needs no Docker and no
+# registry sign-in.
+builder:
+  kind: buildkit
+  # The longest one build may take. Default 30m.
+  # timeout: 30m
+  # buildkit:
+  #   # A rootless BuildKit image, for an estate that mirrors its images.
+  #   image: registry.example.com/mirror/moby/buildkit:v0.35.1-rootless
+  #   resources:
+  #     requests: {cpu: 500m, memory: 1Gi}
+  #     limits: {memory: 4Gi}
+
+# Where environments run. The controller sets this node selector and these
+# tolerations on every pod it applies and on its builder, and writes them
+# onto each environment's namespace. An admission policy then refuses any pod
+# in an environment that does not carry them, whoever made it. Leave the
+# section out to let environments run on any node.
+#
+# A toleration takes key, operator (Equal or Exists), value, and effect.
+# placement:
+#   nodeSelector:
+#     pool: environments
+#   tolerations:
+#     - key: dedicated
+#       operator: Equal
+#       value: environments
+#       effect: NoSchedule
+
+# How long a deploy waits for one service to become healthy, and for one task
+# to finish. A caller may ask for less. Default 5m.
+# deploy:
+#   timeout: 5m

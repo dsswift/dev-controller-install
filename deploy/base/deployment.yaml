@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dev-controller
+  namespace: dev-system
+  labels:
+    app.kubernetes.io/name: dev-controller
+spec:
+  # One replica answers the API and counts the caps. A second replica is safe
+  # for a rollout: a lease picks which one reconciles.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dev-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dev-controller
+    spec:
+      serviceAccountName: dev-controller
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: ghcr.io/dsswift/dev-controller
+          args:
+            - --settings=/etc/dev-controller/settings.yaml
+            - --listen=:8080
+          env:
+            # Telemetry is off until the estate sets
+            # OTEL_EXPORTER_OTLP_ENDPOINT in its overlay.
+            - name: OTEL_SERVICE_NAME
+              value: dev-controller
+            # The registry the builder pushes to. The admission policy is
+            # rendered from the same value.
+            - name: DEV_ENVIRONMENT_REGISTRY
+              valueFrom:
+                configMapKeyRef:
+                  name: dev-controller-settings
+                  key: environmentRegistry
+            # Who the controller is, so it can bind the environment role to
+            # itself.
+            - name: DEV_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: settings
+              mountPath: /etc/dev-controller
+              readOnly: true
+      volumes:
+        - name: settings
+          configMap:
+            name: dev-controller-settings
+            items:
+              - key: settings.yaml
+                path: settings.yaml

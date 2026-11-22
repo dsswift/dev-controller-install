@@ -1,0 +1,41 @@
+# The dev controller's install. It is a Kustomize component: an estate lists
+# it under `components:` in a kustomization of its own, beside the settings
+# object it makes. See deploy/README.md.
+#
+# It is a component, and not a base, so that it is rendered together with the
+# estate's settings. The environment registry is copied out of the settings
+# object into the admission policy as the install is rendered (ADR-2001), so
+# the policy never has a value to look up when a pod is admitted, and an
+# install with no registry named does not render at all.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - namespace.yaml
+  - crds/dev.dsswift.github.io_environments.yaml
+  - rbac.yaml
+  - service.yaml
+  - deployment.yaml
+  - policies.yaml
+
+replacements:
+  # The estate's environment registry, into the policy that keeps its images
+  # inside environments. The value lands between the quotes of a CEL string.
+  - source:
+      kind: ConfigMap
+      name: dev-controller-settings
+      namespace: dev-system
+      fieldPath: data.environmentRegistry
+    targets:
+      - select:
+          kind: ValidatingAdmissionPolicy
+          name: dev-environment-images
+        fieldPaths:
+          - spec.variables.[name=configured].expression
+        options:
+          delimiter: "'"
+          index: 1
+
+images:
+  - name: ghcr.io/dsswift/dev-controller
+    newTag: 4.11.0 # x-release-please-version

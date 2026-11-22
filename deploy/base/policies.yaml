@@ -1,0 +1,234 @@
+# Three admission policies ship with the controller. All are native
+# ValidatingAdmissionPolicy, so the install needs no policy engine. None
+# reads a parameter: what a policy must know is in the policy itself or on
+# the namespace it judges, so there is nothing whose absence lets a pod
+# through.
+
+# ADR-2001: an image from the environment registry runs only in an
+# environment's namespace, never in one of kind test or prod, and only by
+# digest.
+#
+# The registry is rendered into the first variable when the install is built,
+# from the environmentRegistry value of the estate's settings object. With
+# that value empty there is no environment registry, and nothing is refused.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: dev-environment-images
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: [CREATE, UPDATE]
+        resources: [pods, pods/ephemeralcontainers]
+  variables:
+    # The value between the quotes is replaced when the install is rendered.
+    - name: configured
+      expression: "'rendered-from-environmentRegistry'"
+    # A trailing slash, so registry.example.com/environments does not also
+    # match registry.example.com/environments-of-another-kind.
+    - name: registry
+      expression: "variables.configured.endsWith('/') ? variables.configured : variables.configured + '/'"
+    - name: images
+      expression: >-
+        object.spec.containers.map(c, c.image)
+        + (has(object.spec.initContainers) ? object.spec.initContainers.map(c, c.image) : [])
+        + (has(object.spec.ephemeralContainers) ? object.spec.ephemeralContainers.map(c, c.image) : [])
+    - name: fromEnvironmentRegistry
+      expression: "variables.images.filter(i, i.startsWith(variables.registry))"
+    - name: byTag
+      expression: "variables.fromEnvironmentRegistry.filter(i, !i.contains('@sha256:'))"
+    - name: labels
+      expression: "has(namespaceObject.metadata.labels) ? namespaceObject.metadata.labels : {}"
+    - name: takesEnvironmentImages
+      expression: >-
+        'dev.dsswift.github.io/environment' in variables.labels
+        && !('dev.dsswift.github.io/kind' in variables.labels
+             && variables.labels['dev.dsswift.github.io/kind'] in ['test', 'prod'])
+  validations:
+    - expression: >-
+        variables.configured == ''
+        || variables.takesEnvironmentImages
+        || size(variables.fromEnvironmentRegistry) == 0
+      messageExpression: >-
+        'image ' + variables.fromEnvironmentRegistry[0]
+        + ' comes from the environment registry, and such an image runs only in a dev environment that is not of kind test or prod; namespace '
+        + namespaceObject.metadata.name + ' is not one'
+      reason: Forbidden
+    # In an environment, such an image is the digest the controller built. A
+    # tag can be moved by anyone who can push; a digest cannot.
+    - expression: "variables.configured == '' || size(variables.byTag) == 0"
+      messageExpression: >-
+        'image ' + variables.byTag[0]
+        + ' comes from the environment registry by tag, and such an image runs only by the digest the dev controller built'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: dev-environment-images
+spec:
+  policyName: dev-environment-images
+  validationActions: [Deny]
+---
+# ADR-2006: a pod in an environment stays on the nodes the estate picked.
+#
+# The controller writes the estate's node selector and tolerations onto each
+# environment's namespace as annotations, and sets them on every pod it
+# applies. This policy refuses a pod in an environment that does not carry
+# them, whoever made it. With no placement in the settings the namespace has
+# no such annotation, and nothing is refused.
+#
+# The node selector is key=value pairs joined by commas. The tolerations are
+# key|operator|value|effect entries joined by commas.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: dev-environment-placement
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: dev.dsswift.github.io/environment
+          operator: Exists
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: [CREATE]
+        resources: [pods]
+  variables:
+    - name: annotations
+      expression: "has(namespaceObject.metadata.annotations) ? namespaceObject.metadata.annotations : {}"
+    - name: selectorText
+      expression: >-
+        'dev.dsswift.github.io/node-selector' in variables.annotations
+        ? variables.annotations['dev.dsswift.github.io/node-selector'] : ''
+    - name: tolerationsText
+      expression: >-
+        'dev.dsswift.github.io/tolerations' in variables.annotations
+        ? variables.annotations['dev.dsswift.github.io/tolerations'] : ''
+    - name: wantSelector
+      expression: "variables.selectorText == '' ? [] : variables.selectorText.split(',')"
+    - name: wantTolerations
+      expression: "variables.tolerationsText == '' ? [] : variables.tolerationsText.split(',')"
+    - name: selector
+      expression: "has(object.spec.nodeSelector) ? object.spec.nodeSelector : {}"
+    - name: tolerations
+      expression: "has(object.spec.tolerations) ? object.spec.tolerations : []"
+  validations:
+    - expression: >-
+        variables.wantSelector.all(pair,
+          pair.split('=')[0] in variables.selector
+          && variables.selector[pair.split('=')[0]] == pair.split('=')[1])
+      messageExpression: >-
+        'a pod in environment ' + namespaceObject.metadata.name
+        + ' must carry the node selector ' + variables.selectorText
+        + ', which the estate set for every environment'
+      reason: Forbidden
+    - expression: >-
+        variables.wantTolerations.all(want,
+          variables.tolerations.exists(t,
+            (has(t.key) ? t.key : '') == want.split('|')[0]
+            && (has(t.operator) ? t.operator : 'Equal') == want.split('|')[1]
+            && (has(t.value) ? t.value : '') == want.split('|')[2]
+            && (has(t.effect) ? t.effect : '') == want.split('|')[3]))
+      messageExpression: >-
+        'a pod in environment ' + namespaceObject.metadata.name
+        + ' must carry the tolerations ' + variables.tolerationsText
+        + ' (key|operator|value|effect), which the estate set for every environment'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: dev-environment-placement
+spec:
+  policyName: dev-environment-placement
+  validationActions: [Deny]
+---
+# ADR-2004: keeps the controller to what it made. Its ClusterRole lets it write quotas,
+# network policies, secrets, and one role binding in any namespace, because
+# an environment's namespace does not exist until the controller makes it.
+# This policy refuses every write by the controller's service account outside
+# a namespace that carries the environment label, its own namespace and its
+# own records aside. And it refuses any role binding but the one that gives
+# the controller the environment role.
+#
+# It judges a stream too (ADR-2007). A command run in a pod and a connection
+# to a pod's port reach admission as CONNECT. The controller holds the right
+# for them only through the environment role, so this is a second guard: a
+# stream by the controller into a pod outside an environment is refused here
+# even if that role were ever bound more widely.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: dev-controller-scope
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE, DELETE, CONNECT]
+        resources: ["*/*"]
+  matchConditions:
+    - name: is-the-controller
+      expression: "request.userInfo.username == 'system:serviceaccount:dev-system:dev-controller'"
+    - name: not-its-own-records
+      expression: "request.resource.group != 'dev.dsswift.github.io'"
+    # Its lease, its events, and the builder it runs. A Namespace object's
+    # request carries the namespace's own name, so the dev-system namespace
+    # itself is still checked below, and refused. So is a role binding: the
+    # controller grants itself nothing in its own namespace.
+    - name: not-inside-its-own-namespace
+      expression: >-
+        !(request.namespace == 'dev-system'
+          && !(request.resource.group == '' && request.resource.resource == 'namespaces')
+          && request.resource.group != 'rbac.authorization.k8s.io')
+  variables:
+    - name: isNamespace
+      expression: "request.resource.group == '' && request.resource.resource == 'namespaces'"
+    - name: newIsEnvironment
+      expression: "object != null && has(object.metadata.labels) && 'dev.dsswift.github.io/environment' in object.metadata.labels"
+    - name: oldIsEnvironment
+      expression: "oldObject != null && has(oldObject.metadata.labels) && 'dev.dsswift.github.io/environment' in oldObject.metadata.labels"
+    - name: inEnvironment
+      expression: "namespaceObject != null && has(namespaceObject.metadata.labels) && 'dev.dsswift.github.io/environment' in namespaceObject.metadata.labels"
+    - name: grantsRights
+      expression: "request.resource.group == 'rbac.authorization.k8s.io' && request.operation != 'DELETE'"
+  validations:
+    # A namespace it makes must carry the label; one it changes or deletes
+    # must have carried it already, and must keep it.
+    - expression: >-
+        !variables.isNamespace
+        || (request.operation == 'CREATE' && variables.newIsEnvironment)
+        || (request.operation == 'UPDATE' && variables.oldIsEnvironment && variables.newIsEnvironment)
+        || (request.operation == 'DELETE' && variables.oldIsEnvironment)
+      message: "the dev controller may only make, change, or delete a namespace that carries the dev.dsswift.github.io/environment label"
+      reason: Forbidden
+    - expression: "variables.isNamespace || variables.inEnvironment"
+      message: "the dev controller may only write inside, and reach into a pod of, a namespace that carries the dev.dsswift.github.io/environment label"
+      reason: Forbidden
+    # The one binding it may write: the environment role, to itself alone.
+    - expression: >-
+        !variables.grantsRights
+        || (request.resource.resource == 'rolebindings'
+            && object.roleRef.kind == 'ClusterRole'
+            && object.roleRef.name == 'dev-controller-environment'
+            && has(object.subjects) && size(object.subjects) == 1
+            && object.subjects[0].kind == 'ServiceAccount'
+            && object.subjects[0].name == 'dev-controller'
+            && has(object.subjects[0].namespace) && object.subjects[0].namespace == 'dev-system')
+      message: "the dev controller may only bind the dev-controller-environment role, and only to its own service account"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: dev-controller-scope
+spec:
+  policyName: dev-controller-scope
+  validationActions: [Deny]

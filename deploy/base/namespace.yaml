@@ -1,0 +1,11 @@
+# The controller's own namespace. The policies and the RBAC in this install
+# name it, so an estate that wants another name patches every place that
+# does.
+#
+# The controller runs its builder here, rootless BuildKit, which needs a pod
+# with no seccomp or AppArmor profile. So this namespace cannot be held to
+# the baseline pod security standard: do not label it so.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev-system

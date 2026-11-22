@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dev-controller
+  namespace: dev-system
+---
+# ADR-2004. What the controller may do anywhere. It is only what it needs
+# before an environment's namespace can answer to a role of its own: making
+# the namespace, and what the estate puts in every one. The
+# dev-controller-scope policy in policies.yaml narrows every write here to a
+# namespace that carries the environment label, so these rights stop at what
+# the controller made.
+#
+# The controller writes with server-side apply, which needs create and patch
+# and no read. So it can write a secret into an environment and can read no
+# secret there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dev-controller
+rules:
+  # Its own records.
+  - apiGroups: [dev.dsswift.github.io]
+    resources: [environments]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [dev.dsswift.github.io]
+    resources: [environments/status]
+    verbs: [get, patch]
+  # One namespace per environment. It reads namespaces to know whether a name
+  # is taken, and patches one it made to keep its labels and its placement.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, patch, delete]
+  # What every environment's namespace gets.
+  - apiGroups: [""]
+    resources: [resourcequotas, limitranges]
+    verbs: [create, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, patch]
+  # Copies of the secrets the estate lists, and the secrets a project's own
+  # manifests hold. delete removes a copy the estate no longer lists, and
+  # prunes one a project dropped. There is no read.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, patch, delete]
+  # The environment role, bound to itself in each namespace it makes. `bind`
+  # names that one role, so the controller can grant no other; the scope
+  # policy holds the binding to the controller's own service account.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [create, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [dev-controller-environment]
+    verbs: [bind]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dev-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dev-controller
+subjects:
+  - kind: ServiceAccount
+    name: dev-controller
+    namespace: dev-system
+---
+# ADR-2004. What the controller may do inside one environment. No binding in
+# this file gives it to anyone: the controller binds it to itself in each
+# namespace it makes, so it holds these rights there and nowhere else. It can
+# read a pod or its log in an environment, run a command in one, and reach
+# one's port, and in no other namespace.
+#
+# The reads are what waiting for health needs, and what gives a failed
+# deploy the cluster's own reason. The writes are the kinds a project's
+# manifests may hold: the list in internal/controller/manifests. A kind joins
+# both lists or neither. The streams are what a signed-in caller's logs,
+# commands, and forwards are carried by (ADR-2007). There is no secret here,
+# and no wildcard.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dev-controller-environment
+rules:
+  # Reads.
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list]
+  # A forward that names a Kubernetes Service is sent where that Service
+  # sends its port, to the pods it picks.
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get]
+  # Streams: a command run in a pod, and a connection to a pod's port. The
+  # cluster asks for `create` or for `get`, by how the stream is carried.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/portforward]
+    verbs: [create, get]
+  # Writes.
+  - apiGroups: [""]
+    resources: [configmaps, services, serviceaccounts, persistentvolumeclaims]
+    verbs: [create, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [create, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [create, patch, delete]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [create, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [create, patch, delete]
+  # The Ingress the controller makes for a service that asks for a host.
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [create, patch, delete]
+---
+# What the controller may do in its own namespace: hold the lease that picks
+# which replica reconciles, read the secrets it copies into environments and
+# the registry's push secret, and run its builder. An estate that keeps those
+# secrets in another namespace gives the controller get on them there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dev-controller
+  namespace: dev-system
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+  # The BuildKit the controller runs: its Deployment and its Service. Its
+  # network policy is written with the right the ClusterRole already has.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dev-controller
+  namespace: dev-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dev-controller
+subjects:
+  - kind: ServiceAccount
+    name: dev-controller
+    namespace: dev-system
