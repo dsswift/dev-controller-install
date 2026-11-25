@@ -38,4 +38,4 @@ replacements:
 
 images:
   - name: ghcr.io/dsswift/dev-controller
-    newTag: 4.12.0 # x-release-please-version
+    newTag: 4.12.1 # x-release-please-version

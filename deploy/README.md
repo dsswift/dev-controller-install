@@ -32,6 +32,11 @@ kustomization of its own, beside the settings object it makes.
   environments. Only the controller's builder should be able to push there.
 - A network plugin that enforces network policies. Each environment is
   walled in by one, and the builder is kept to the controller by another.
+  Policies add their allows together, so no other policy may let an
+  environment's pods out: a cluster-wide policy that allows egress, such as
+  Cilium's `toEntities: [all]`, must leave out every namespace labelled
+  `dev.dsswift.github.io/environment`. Check it from an environment's pod
+  by reaching something in the cluster that `network.egress` does not name.
 
 ## What the install holds
 
@@ -62,7 +67,7 @@ Rootless BuildKit needs a pod with no seccomp or AppArmor profile, so
    kind: Kustomization
    components:
      # The install at the release you run. Its image is that release's.
-     - https://github.com/dsswift/dev-controller-install//deploy/base?ref=v4.12.0 # x-release-please-version
+     - https://github.com/dsswift/dev-controller-install//deploy/base?ref=v4.12.1 # x-release-please-version
    configMapGenerator:
      - name: dev-controller-settings
        namespace: dev-system
@@ -245,7 +250,7 @@ digest and carries an SBOM attestation. Check one before you run it:
 
 <!-- x-release-please-start-version -->
 ```bash
-cosign verify ghcr.io/dsswift/dev-controller:4.12.0 \
+cosign verify ghcr.io/dsswift/dev-controller:4.12.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/dsswift/dev.yaml/'
 ```
@@ -389,7 +394,7 @@ With no endpoint it sends nothing.
 | `dev_controller.build_info` | The running version. |
 | `http.server.request.duration` | Each request, by route, method, and status. |
 | `http.client.request.duration` | Each call out: the cluster's API and the sign-in service. |
-| `dev_controller.task.duration` | Each reconcile, each build, and each deploy, by outcome. |
+| `dev_controller.task.duration` | Each reconcile, each build, each deploy, and each pass that puts BuildKit back in place (`builder`), by outcome. |
 | `dev_controller.auth` | Sign-in checks: ok, refused, expired. |
 | `dev_controller.refusals` | Requests refused on policy, by reason. |
 | `dev_controller.environments` | Environments by kind and phase. |
